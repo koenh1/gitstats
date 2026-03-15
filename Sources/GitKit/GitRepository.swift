@@ -158,7 +158,9 @@ public actor GitRepository {
             let metaParts = meta.split(separator: " ").filter { !$0.isEmpty }
             guard metaParts.count >= 4, let size = Int(metaParts[3]) else { continue }
             
-            let dotExt = ext.isEmpty ? "(none)" : ".\(ext)"
+            // Treat extensions >4 chars or containing uppercase as "no extension"
+            let isValidExt = !ext.isEmpty && ext.count <= 4 && ext == ext.lowercased()
+            let dotExt = isValidExt ? ".\(ext)" : "(none)"
             filesByExt[dotExt, default: []].append(FileInfo(path: filePath, size: size))
         }
         
