@@ -254,6 +254,21 @@ public actor GitRepository {
         return String(decoding: data, as: UTF8.self)
     }
     
+    // MARK: - Pom Version
+    
+    /// Reads the major.minor version from pom.xml at a specific commit.
+    /// Returns nil if no pom.xml exists or no version can be parsed.
+    public func pomMajorMinorVersion(at commitHash: String) -> String? {
+        guard let content = try? runGit(["show", "\(commitHash):pom.xml"]) else { return nil }
+        return PomVersionExtractor().extractVersion(from: content)?.majorMinor
+    }
+    
+    /// Returns true if the repo has a pom.xml at HEAD.
+    public func hasPomXml() -> Bool {
+        let result = (try? runGit(["ls-tree", "--name-only", "HEAD", "pom.xml"])) ?? ""
+        return result.trimmingCharacters(in: .whitespacesAndNewlines) == "pom.xml"
+    }
+    
     // MARK: - Version Markers
     
     /// A version marker with a date and label, for overlaying on charts.
@@ -267,7 +282,7 @@ public actor GitRepository {
     
     /// Extracts version markers from git tags and/or pom.xml.
     /// For tags: parses semver-like patterns and deduplicates by major.minor.
-    /// For pom.xml: reads the <version> at each tag commit, using major.minor only.
+    /// For version files (pom.xml, etc.): reads the version at each commit, using major.minor only.
     public func versionMarkers() throws -> [VersionMarker] {
         var markers: [VersionMarker] = []
         var seenVersions = Set<String>()
@@ -313,34 +328,46 @@ public actor GitRepository {
             }
         }
         
-        // If no tag-based markers found, try pom.xml
+        // If no tag-based markers found, try version files
         if markers.isEmpty {
-            markers = try pomVersionMarkers()
+            for extractor in VersionExtractors.all {
+                markers = try versionFileMarkers(extractor: extractor)
+                if !markers.isEmpty { break }
+            }
         }
         
         return markers.sorted { $0.date < $1.date }
     }
     
-    /// Extract versions from pom.xml across the repo history.
-    private func pomVersionMarkers() throws -> [VersionMarker] {
-        // Check if pom.xml exists at HEAD
-        let hasFile = (try? runGit(["ls-tree", "--name-only", "HEAD", "pom.xml"])) ?? ""
-        guard hasFile.trimmingCharacters(in: .whitespacesAndNewlines) == "pom.xml" else {
+    /// Extract versions from a version file across the repo history using the given extractor.
+    /// If all extracted versions share the same major.minor, uses major.minor.patch for dedup.
+    private func versionFileMarkers(extractor: VersionExtractor) throws -> [VersionMarker] {
+        let filename = extractor.filename
+        
+        // Check if the file exists at HEAD
+        let hasFile = (try? runGit(["ls-tree", "--name-only", "HEAD", filename])) ?? ""
+        guard hasFile.trimmingCharacters(in: .whitespacesAndNewlines) == filename else {
             return []
         }
         
-        // Get commits that modified pom.xml (oldest first) with timestamps and author
+        // Get commits that modified the file (oldest first) with timestamps and author
         let logOutput = try runGit([
-            "log", "--format=%H %at %aN", "--reverse", "--diff-filter=AM", "--", "pom.xml"
+            "log", "--format=%H %at %aN", "--reverse", "--diff-filter=AM", "--", filename
         ])
         
-        let versionPattern = try NSRegularExpression(
-            pattern: #"<version>(\d+)\.(\d+)(?:\.\d+)*(?:-[A-Za-z0-9.]+)?</version>"#
-        )
+        // Derive source name from filename
+        let source = filename.hasSuffix(".xml")
+            ? String(filename.dropLast(4))
+            : filename
         
-        var markers: [VersionMarker] = []
-        var seenVersions = Set<String>()
+        // First pass: collect all entries with extracted versions
+        struct VersionEntry {
+            let date: Date
+            let author: String
+            let extracted: ExtractedVersion
+        }
         
+        var entries: [VersionEntry] = []
         for line in logOutput.split(separator: "\n") {
             let parts = line.split(separator: " ", maxSplits: 2)
             guard parts.count >= 2,
@@ -348,38 +375,37 @@ public actor GitRepository {
             let hash = String(parts[0])
             let author = parts.count >= 3 ? String(parts[2]) : ""
             
-            // Read pom.xml at this commit
-            guard let content = try? runGit(["show", "\(hash):pom.xml"]) else { continue }
+            guard let content = try? runGit(["show", "\(hash):\(filename)"]),
+                  let extracted = extractor.extractVersion(from: content) else { continue }
             
-            // Match the first <version> tag for the full version
-            let fullVersionPattern = try NSRegularExpression(
-                pattern: #"<version>([^<]+)</version>"#
-            )
-            let range = NSRange(content.startIndex..., in: content)
-            guard let match = versionPattern.firstMatch(in: content, range: range) else { continue }
-            
-            let majorRange = Range(match.range(at: 1), in: content)!
-            let minorRange = Range(match.range(at: 2), in: content)!
-            let majorMinor = "\(content[majorRange]).\(content[minorRange])"
-            
-            guard !seenVersions.contains(majorMinor) else { continue }
-            seenVersions.insert(majorMinor)
-            
-            // Get full version string
-            let fullVersion: String
-            if let fvMatch = fullVersionPattern.firstMatch(in: content, range: range),
-               let fvRange = Range(fvMatch.range(at: 1), in: content) {
-                fullVersion = String(content[fvRange])
-            } else {
-                fullVersion = majorMinor
-            }
+            entries.append(VersionEntry(
+                date: Date(timeIntervalSince1970: ts),
+                author: author,
+                extracted: extracted
+            ))
+        }
+        
+        guard !entries.isEmpty else { return [] }
+        
+        // If all majorMinor values are the same, use patch-level granularity
+        let uniqueMajorMinors = Set(entries.map(\.extracted.majorMinor))
+        let usePatch = uniqueMajorMinors.count <= 1
+        
+        // Second pass: build markers with chosen granularity
+        var markers: [VersionMarker] = []
+        var seenVersions = Set<String>()
+        
+        for entry in entries {
+            let versionKey = usePatch ? entry.extracted.majorMinorPatch : entry.extracted.majorMinor
+            guard !seenVersions.contains(versionKey) else { continue }
+            seenVersions.insert(versionKey)
             
             markers.append(VersionMarker(
-                date: Date(timeIntervalSince1970: ts),
-                version: majorMinor,
-                fullVersion: fullVersion,
-                author: author,
-                source: "pom"
+                date: entry.date,
+                version: versionKey,
+                fullVersion: entry.extracted.fullVersion,
+                author: entry.author,
+                source: source
             ))
         }
         

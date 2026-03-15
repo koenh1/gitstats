@@ -17,6 +17,7 @@ public struct AnalysisConfig: Sendable {
     public var filePaths: Set<String>?       // explicit set of file paths to include
     public var authors: Set<String>?         // nil = all authors
     public var granularity: TimeGranularity
+    public var refineSamplingWithPom: Bool   // binary-search for version transitions
     
     public enum TimeGranularity: String, CaseIterable, Sendable {
         case year = "Year"
@@ -31,13 +32,15 @@ public struct AnalysisConfig: Sendable {
         fileExtensions: Set<String>? = nil,
         filePaths: Set<String>? = nil,
         authors: Set<String>? = nil,
-        granularity: TimeGranularity = .quarter
+        granularity: TimeGranularity = .quarter,
+        refineSamplingWithPom: Bool = false
     ) {
         self.sampleCount = sampleCount
         self.fileExtensions = fileExtensions
         self.filePaths = filePaths
         self.authors = authors
         self.granularity = granularity
+        self.refineSamplingWithPom = refineSamplingWithPom
     }
 }
 
@@ -71,6 +74,26 @@ public actor AnalysisEngine {
         self.repo = repo
     }
     
+    /// Reads pom.xml major.minor version at a commit by shelling out directly.
+    /// This is a nonisolated static method so it can be called from synchronous closures.
+    nonisolated static func readPomVersion(at hash: String, repoPath: URL) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["show", "\(hash):pom.xml"]
+        process.currentDirectoryURL = repoPath
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        
+        guard (try? process.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        
+        let content = String(decoding: data, as: UTF8.self)
+        return PomVersionExtractor().extractVersion(from: content)?.majorMinor
+    }
+    
     /// Runs the full analysis pipeline and returns aggregated line-age buckets.
     public func analyze(
         config: AnalysisConfig,
@@ -88,11 +111,24 @@ public actor AnalysisEngine {
         }
         guard !allCommits.isEmpty else { return [] }
         
-        // 2. Sample
-        let sampled = CommitSampler.sample(allCommits, count: config.sampleCount)
+        let repoPath = repo.path
+        
+        // 2. Sample evenly, then refine with version transitions if requested
+        var sampled = CommitSampler.sample(allCommits, count: config.sampleCount)
+        
+        if config.refineSamplingWithPom {
+            let path = repoPath
+            sampled = CommitSampler.refineWithVersionTransitions(
+                sampled: sampled,
+                allCommits: allCommits,
+                versionAt: { hash in
+                    Self.readPomVersion(at: hash, repoPath: path)
+                }
+            )
+            print("Version-refined sampling: \(sampled.count) commits (from \(config.sampleCount) initial)")
+        }
         
         // 3. Collect blame data for each sampled commit
-        let repoPath = repo.path
         var allRawData: [(commitTimestamp: TimeInterval, lineTimestamp: TimeInterval, info: CommitKey)] = []
         
         for (index, commit) in sampled.enumerated() {

@@ -71,6 +71,7 @@ final class AnalysisViewModel {
     // Version markers
     var versionMarkers: [(date: Date, label: String, fullVersion: String, author: String, source: String)] = []
     var showVersionMarkers: Bool = true
+    var hasPomXml: Bool = false
 
     // State
     var isAnalyzing: Bool = false
@@ -221,11 +222,17 @@ final class AnalysisViewModel {
 
                     self.isLoadingExtensions = false
                     
-                    // Fetch version markers (non-blocking)
+                    // Fetch version markers and detect pom.xml (non-blocking)
                     Task {
+                        let pom = await repo.hasPomXml()
                         if let markers = try? await repo.versionMarkers() {
                             await MainActor.run {
+                                self.hasPomXml = pom
                                 self.versionMarkers = markers.map { ($0.date, $0.version, $0.fullVersion, $0.author, $0.source) }
+                            }
+                        } else {
+                            await MainActor.run {
+                                self.hasPomXml = pom
                             }
                         }
                     }
@@ -273,7 +280,8 @@ final class AnalysisViewModel {
         let config = AnalysisConfig(
             sampleCount: Int(sampleCount),
             filePaths: selected,
-            granularity: granularity
+            granularity: granularity,
+            refineSamplingWithPom: hasPomXml && showVersionMarkers
         )
 
         analysisTask = Task {
