@@ -464,7 +464,7 @@ struct ContentView: View {
             if let html = viewModel.interactiveHTML {
                 SVGPreviewView(htmlString: html)
             } else if !viewModel.discoveredExtensions.isEmpty && !viewModel.isLoadingExtensions {
-                extensionPieChart
+                preAnalysisDashboard
             } else {
                 emptyState
             }
@@ -484,13 +484,107 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    // MARK: - Extension Pie Chart
+    // MARK: - Pre-Analysis Dashboard
     
-    private var extensionPieChart: some View {
-        ExtensionPieChartView(
-            extensions: viewModel.discoveredExtensions.filter { $0.isTextType && $0.lineCount > 0 },
-            repoName: viewModel.repoName
+    private var preAnalysisDashboard: some View {
+        ScrollView {
+            VStack(spacing: 28) {
+                // Repo summary banner
+                repoSummaryBanner
+                
+                // Charts in a horizontal pair
+                HStack(alignment: .top, spacing: 24) {
+                    // Extension pie chart
+                    ExtensionPieChartView(
+                        extensions: viewModel.discoveredExtensions.filter { $0.isTextType && $0.lineCount > 0 },
+                        repoName: viewModel.repoName
+                    )
+                    .frame(minWidth: 300)
+                    
+                    // Contributor pie chart
+                    ContributorPieChartView(
+                        contributors: viewModel.discoveredContributors
+                    )
+                    .frame(minWidth: 300)
+                }
+                
+                // Commit activity timeline
+                CommitTimelineView(commitDates: viewModel.commitDates)
+                    .frame(height: 180)
+                    .padding(.horizontal, 8)
+            }
+            .padding(32)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var repoSummaryBanner: some View {
+        HStack(spacing: 0) {
+            summaryStatItem(
+                icon: "arrow.triangle.branch",
+                value: "\(viewModel.totalCommitCount)",
+                label: "Commits"
+            )
+            Divider().frame(height: 36)
+            summaryStatItem(
+                icon: "calendar",
+                value: repoAgeString,
+                label: "Active"
+            )
+            Divider().frame(height: 36)
+            summaryStatItem(
+                icon: "person.2",
+                value: "\(viewModel.discoveredContributors.count)",
+                label: "Contributors"
+            )
+            Divider().frame(height: 36)
+            summaryStatItem(
+                icon: "doc.text",
+                value: "\(viewModel.totalFileCount)",
+                label: "Files"
+            )
+            Divider().frame(height: 36)
+            summaryStatItem(
+                icon: "text.alignleft",
+                value: formatCount(totalTextLines),
+                label: "Lines of Code"
+            )
+        }
+        .padding(.vertical, 16)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.ultraThinMaterial)
         )
+    }
+    
+    private func summaryStatItem(icon: String, value: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title2.bold().monospacedDigit())
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+    
+    private var repoAgeString: String {
+        guard let first = viewModel.firstCommitDate, let last = viewModel.lastCommitDate else { return "—" }
+        let components = Calendar.current.dateComponents([.year, .month], from: first, to: last)
+        let years = components.year ?? 0
+        let months = components.month ?? 0
+        if years > 0 {
+            return months > 0 ? "\(years)y \(months)m" : "\(years)y"
+        } else {
+            return "\(max(1, months))m"
+        }
+    }
+    
+    private var totalTextLines: Int {
+        viewModel.discoveredExtensions.filter(\.isTextType).reduce(0) { $0 + $1.lineCount }
     }
 }
 
@@ -615,44 +709,136 @@ struct ExtensionPieChartView: View {
     }
     
     var body: some View {
-        VStack(spacing: 24) {
-            Text(repoName)
-                .font(.title2.bold())
-                .foregroundStyle(.primary)
-            
+        VStack(spacing: 16) {
             Text("Lines of Code by Extension")
-                .font(.subheadline)
+                .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
             
-            HStack(spacing: 40) {
-                // Pie chart
-                pieChart
-                    .frame(width: 280, height: 280)
-                
-                // Legend
-                legend
-                    .frame(maxWidth: 250)
-            }
+            DonutChart(slices: sortedExtensions.enumerated().map { i, ext in
+                DonutSlice(value: Double(ext.lineCount), color: Self.colors[i % Self.colors.count])
+            })
+            .frame(width: 200, height: 200)
             
-            Text("\(formatLargeCount(totalLines)) total lines")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            // Legend
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(sortedExtensions.enumerated()), id: \.element.id) { index, ext in
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Self.colors[index % Self.colors.count])
+                                .frame(width: 10, height: 10)
+                            Text(ext.ext)
+                                .font(.caption.monospaced())
+                            Spacer()
+                            Text(formatCount(ext.lineCount))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            let pct = totalLines > 0 ? Double(ext.lineCount) / Double(totalLines) * 100 : 0
+                            Text(String(format: "%.0f%%", pct))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 32, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 160)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     
-    private var pieChart: some View {
+    private func formatCount(_ value: Int) -> String {
+        if value >= 1_000_000 { return String(format: "%.1fM", Double(value) / 1_000_000) }
+        if value >= 1_000 { return String(format: "%.1fK", Double(value) / 1_000) }
+        return "\(value)"
+    }
+}
+
+// MARK: - Contributor Pie Chart
+
+struct ContributorPieChartView: View {
+    let contributors: [ContributorItem]
+    
+    private static let colors: [Color] = [
+        Color(hue: 0.08, saturation: 0.65, brightness: 0.90),  // orange
+        Color(hue: 0.58, saturation: 0.65, brightness: 0.85),  // blue
+        Color(hue: 0.35, saturation: 0.60, brightness: 0.75),  // green
+        Color(hue: 0.85, saturation: 0.55, brightness: 0.80),  // purple
+        Color(hue: 0.95, saturation: 0.55, brightness: 0.85),  // pink
+        Color(hue: 0.15, saturation: 0.60, brightness: 0.85),  // yellow
+        Color(hue: 0.55, saturation: 0.50, brightness: 0.80),  // teal
+        Color(hue: 0.70, saturation: 0.45, brightness: 0.75),  // indigo
+        Color(hue: 0.02, saturation: 0.60, brightness: 0.80),  // red
+        Color(hue: 0.45, saturation: 0.55, brightness: 0.70),  // cyan
+        Color(hue: 0.28, saturation: 0.50, brightness: 0.70),  // lime
+        Color(hue: 0.78, saturation: 0.40, brightness: 0.70),  // lavender
+    ]
+    
+    private var totalCommits: Int {
+        contributors.reduce(0) { $0 + $1.commitCount }
+    }
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Commits by Contributor")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            
+            DonutChart(slices: contributors.enumerated().map { i, c in
+                DonutSlice(value: Double(c.commitCount), color: Self.colors[i % Self.colors.count])
+            })
+            .frame(width: 200, height: 200)
+            
+            // Legend
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(contributors.enumerated()), id: \.element.id) { index, contributor in
+                        HStack(spacing: 6) {
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(Self.colors[index % Self.colors.count])
+                                .frame(width: 10, height: 10)
+                            Text(contributor.name)
+                                .font(.caption)
+                                .lineLimit(1)
+                            Spacer()
+                            Text("\(contributor.commitCount)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                            let pct = totalCommits > 0 ? Double(contributor.commitCount) / Double(totalCommits) * 100 : 0
+                            Text(String(format: "%.0f%%", pct))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.tertiary)
+                                .frame(width: 32, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+            .frame(maxHeight: 160)
+        }
+    }
+}
+
+// MARK: - Shared Donut Chart
+
+struct DonutSlice {
+    let value: Double
+    let color: Color
+}
+
+struct DonutChart: View {
+    let slices: [DonutSlice]
+    
+    var body: some View {
         Canvas { context, size in
             let center = CGPoint(x: size.width / 2, y: size.height / 2)
-            let outerRadius = min(size.width, size.height) / 2 - 4
+            let outerRadius = min(size.width, size.height) / 2 - 2
             let innerRadius = outerRadius * 0.55
-            let total = Double(totalLines)
+            let total = slices.reduce(0.0) { $0 + $1.value }
             guard total > 0 else { return }
             
             var startAngle = Angle.degrees(-90)
             
-            for (index, ext) in sortedExtensions.enumerated() {
-                let fraction = Double(ext.lineCount) / total
+            for slice in slices {
+                let fraction = slice.value / total
                 let sweepAngle = Angle.degrees(fraction * 360)
                 let endAngle = startAngle + sweepAngle
                 
@@ -663,53 +849,115 @@ struct ExtensionPieChartView: View {
                            startAngle: endAngle, endAngle: startAngle, clockwise: true)
                 path.closeSubpath()
                 
-                let color = Self.colors[index % Self.colors.count]
-                context.fill(path, with: .color(color))
-                
-                // Subtle gap between slices
+                context.fill(path, with: .color(slice.color))
                 context.stroke(path, with: .color(Color(nsColor: .windowBackgroundColor)), lineWidth: 1.5)
                 
                 startAngle = endAngle
             }
         }
     }
+}
+
+// MARK: - Commit Timeline
+
+struct CommitTimelineView: View {
+    let commitDates: [Date]
     
-    private var legend: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(sortedExtensions.enumerated()), id: \.element.id) { index, ext in
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Self.colors[index % Self.colors.count])
-                            .frame(width: 12, height: 12)
-                        
-                        Text(ext.ext)
-                            .font(.caption.monospaced().bold())
-                        
-                        Spacer()
-                        
-                        let pct = totalLines > 0 ? Double(ext.lineCount) / Double(totalLines) * 100 : 0
-                        Text("\(formatLargeCount(ext.lineCount))")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                        
-                        Text(String(format: "%.1f%%", pct))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 48, alignment: .trailing)
-                    }
-                }
-            }
-        }
+    private struct MonthBucket: Identifiable {
+        let label: String  // e.g. "2023-01"
+        let count: Int
+        var id: String { label }
     }
     
-    private func formatLargeCount(_ value: Int) -> String {
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", Double(value) / 1_000_000)
-        } else if value >= 1_000 {
-            return String(format: "%.1fK", Double(value) / 1_000)
-        } else {
-            return "\(value)"
+    private var buckets: [MonthBucket] {
+        guard !commitDates.isEmpty else { return [] }
+        let calendar = Calendar(identifier: .gregorian)
+        var counts: [String: Int] = [:]
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM"
+        
+        for date in commitDates {
+            let key = formatter.string(from: date)
+            counts[key, default: 0] += 1
+        }
+        
+        // Generate continuous range of months from first to last
+        guard let firstDate = commitDates.first, let lastDate = commitDates.last else { return [] }
+        var result: [MonthBucket] = []
+        var current = calendar.dateComponents([.year, .month], from: firstDate)
+        let last = calendar.dateComponents([.year, .month], from: lastDate)
+        
+        while let year = current.year, let month = current.month {
+            let key = String(format: "%04d-%02d", year, month)
+            result.append(MonthBucket(label: key, count: counts[key] ?? 0))
+            
+            if year == last.year! && month == last.month! { break }
+            
+            if month == 12 {
+                current.year = year + 1
+                current.month = 1
+            } else {
+                current.month = month + 1
+            }
+        }
+        
+        return result
+    }
+    
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("Commit Activity")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            
+            let data = buckets
+            if data.isEmpty {
+                Text("No commit data")
+                    .foregroundStyle(.tertiary)
+            } else {
+                let maxCount = data.map(\.count).max() ?? 1
+                
+                Canvas { context, size in
+                    let barWidth = max(1, size.width / CGFloat(data.count) - 1)
+                    let gap: CGFloat = 1
+                    let chartHeight = size.height - 20  // leave room for labels
+                    
+                    for (i, bucket) in data.enumerated() {
+                        let fraction = CGFloat(bucket.count) / CGFloat(maxCount)
+                        let barHeight = max(fraction > 0 ? 1 : 0, fraction * chartHeight)
+                        let x = CGFloat(i) * (barWidth + gap)
+                        let y = chartHeight - barHeight
+                        
+                        let rect = CGRect(x: x, y: y, width: barWidth, height: barHeight)
+                        let color = Color(hue: 0.58, saturation: 0.5 + 0.3 * Double(fraction), brightness: 0.85)
+                        context.fill(Path(roundedRect: rect, cornerRadius: 1), with: .color(color))
+                    }
+                    
+                    // Year labels along the bottom
+                    var lastYear = ""
+                    for (i, bucket) in data.enumerated() {
+                        let year = String(bucket.label.prefix(4))
+                        if year != lastYear {
+                            lastYear = year
+                            let x = CGFloat(i) * (barWidth + gap)
+                            let text = Text(year).font(.system(size: 9)).foregroundStyle(.tertiary)
+                            context.draw(context.resolve(text), at: CGPoint(x: x, y: size.height - 4), anchor: .bottomLeading)
+                        }
+                    }
+                }
+                
+                HStack {
+                    if let first = data.first?.label, let last = data.last?.label {
+                        Text(first)
+                        Spacer()
+                        Text("\(data.count) months")
+                        Spacer()
+                        Text(last)
+                    }
+                }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            }
         }
     }
 }

@@ -8,19 +8,20 @@ import Foundation
 ///   - "Firstname Lastname"  → "firstname lastname"
 ///   - "Lastname, Firstname" → "firstname lastname"
 public struct AuthorNormalizer {
-    
+
     public static func normalize(_ name: String) -> String {
         var result = name.trimmingCharacters(in: .whitespaces)
-      if let index = result.firstIndex(of: "\\") {
-        result = .init(result[result.index(after: index)...])
-      }
-        
+        if let index = result.firstIndex(of: "\\") {
+            result = .init(result[result.index(after: index)...])
+        }
+
         // Lowercase
         result = result.lowercased()
-        
+
         // Replace dots with spaces
         result = result.replacingOccurrences(of: ".", with: " ")
-        
+          .replacingOccurrences(of: "_", with: " ")
+
         // Handle "lastname, firstname" → "firstname lastname"
         if let commaRange = result.range(of: ",") {
             let before = result[result.startIndex..<commaRange.lowerBound]
@@ -31,12 +32,12 @@ public struct AuthorNormalizer {
                 result = "\(after) \(before)"
             }
         }
-        
+
         // Collapse multiple spaces
         while result.contains("  ") {
             result = result.replacingOccurrences(of: "  ", with: " ")
         }
-        
+
         return result.trimmingCharacters(in: .whitespaces)
     }
 }

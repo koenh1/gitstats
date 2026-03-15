@@ -61,6 +61,12 @@ final class AnalysisViewModel {
     
     // File tree
     var fileTreeRoot: FileTreeNode?
+    
+    // Pre-analysis dashboard data
+    var commitDates: [Date] = []        // all commit dates for timeline
+    var firstCommitDate: Date?
+    var lastCommitDate: Date?
+    var totalFileCount: Int = 0
 
     // State
     var isAnalyzing: Bool = false
@@ -185,6 +191,26 @@ final class AnalysisViewModel {
                     self.discoveredContributors = authorCounts
                         .sorted { $0.value > $1.value }  // most commits first
                         .map { ContributorItem(name: $0.key, commitCount: $0.value) }
+                    
+                    // Dashboard data
+                    self.commitDates = commits.map(\.date)
+                    self.firstCommitDate = commits.first?.date
+                    self.lastCommitDate = commits.last?.date
+                    self.totalFileCount = filePaths.count
+                    
+                    // Auto-select granularity: finest where period count < 20
+                    if let first = commits.first?.date, let last = commits.last?.date {
+                        let cal = Calendar(identifier: .gregorian)
+                        let months = cal.dateComponents([.month], from: first, to: last).month ?? 0
+                        if months < 20 {
+                            self.granularity = .month
+                        } else if months < 20 * 3 {
+                            self.granularity = .quarter
+                        } else {
+                            self.granularity = .year
+                        }
+                    }
+
                     self.isLoadingExtensions = false
                 }
             } catch {
