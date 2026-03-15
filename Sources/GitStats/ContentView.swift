@@ -48,6 +48,14 @@ struct ContentView: View {
                         settingsPanel
                     }
                     .disabled(viewModel.isAnalyzing)
+                    
+                    // Files section
+                    if viewModel.fileTreeRoot != nil {
+                        sidebarSection("Files") {
+                            filesSection
+                        }
+                        .disabled(viewModel.isAnalyzing)
+                    }
 
                     // Contributors section
                     if !viewModel.discoveredContributors.isEmpty {
@@ -163,6 +171,7 @@ struct ContentView: View {
                 Picker("", selection: $viewModel.granularity) {
                     Text("Year").tag(AnalysisConfig.TimeGranularity.year)
                     Text("Quarter").tag(AnalysisConfig.TimeGranularity.quarter)
+                    Text("Month").tag(AnalysisConfig.TimeGranularity.month)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -184,74 +193,165 @@ struct ContentView: View {
                     }
                 }
             }
-
-            // File extensions
-            extensionsSection
         }
     }
-
-    private var extensionsSection: some View {
+    
+    // MARK: - Files Section (Tree + Extension Preselection)
+    
+    private var filesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Extension preselection chips
+            if !viewModel.discoveredExtensions.isEmpty {
+                extensionPreselection
+            }
+            
+            // File tree
+            if let root = viewModel.fileTreeRoot {
+                fileTreeView(root)
+            }
+        }
+    }
+    
+    private var extensionPreselection: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("File extensions")
+                Text("Preselect by extension")
                     .font(.caption)
                 Spacer()
-                if !viewModel.discoveredExtensions.isEmpty {
-                    Button("All", action: viewModel.selectAll)
-                        .font(.caption2)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Color.accentColor)
-                    Text("·").foregroundStyle(.tertiary).font(.caption2)
-                    Button("None", action: viewModel.selectNone)
-                        .font(.caption2)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-
-            if viewModel.isLoadingExtensions {
-                HStack(spacing: 6) {
-                    ProgressView().scaleEffect(0.6).frame(width: 12, height: 12)
-                    Text("Scanning repo…").font(.caption2).foregroundStyle(.secondary)
-                }
-            } else if viewModel.discoveredExtensions.isEmpty {
-                Text("Select a repository to discover file types")
+                Button("All") { viewModel.selectAllFiles() }
                     .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(viewModel.discoveredExtensions) { item in
-                            Toggle(isOn: Bindable(item).isSelected) {
-                                HStack(spacing: 4) {
-                                    Text(item.ext)
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(item.isTextType ? .primary : .secondary)
-                                    Spacer()
-                                    if item.isTextType && item.lineCount > 0 {
-                                        Text(formatCount(item.lineCount) + " lines")
-                                            .font(.caption2.monospacedDigit())
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    Text(
-                                        formatCount(item.fileCount)
-                                            + (item.fileCount == 1 ? " file" : " files")
-                                    )
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(.tertiary)
-                                }
-                            }
-                            .toggleStyle(.checkbox)
-                            .onChange(of: item.isSelected) {
-                                if viewModel.hasResult {
-                                    viewModel.rerenderChart()
-                                }
-                            }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                Text("·").foregroundStyle(.tertiary).font(.caption2)
+                Button("None") { viewModel.selectNoFiles() }
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+            }
+            
+            // Show only text extensions as toggleable chips
+            let textExts = viewModel.discoveredExtensions.filter(\.isTextType)
+            if !textExts.isEmpty {
+                FlowLayout(spacing: 4) {
+                    ForEach(textExts) { item in
+                        Button {
+                            item.isSelected.toggle()
+                            viewModel.applyExtensionPreselection()
+                        } label: {
+                            Text(item.ext)
+                                .font(.caption2.monospaced())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    item.isSelected
+                                        ? Color.accentColor.opacity(0.2)
+                                        : Color.secondary.opacity(0.1),
+                                    in: RoundedRectangle(cornerRadius: 4)
+                                )
+                                .foregroundStyle(item.isSelected ? Color.accentColor : .secondary)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
-                .frame(maxHeight: 180)
             }
+        }
+    }
+    
+    @ViewBuilder
+    private func fileTreeView(_ root: FileTreeNode) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(root.children) { child in
+                        fileTreeRow(child, depth: 0)
+                    }
+                }
+            }
+            .frame(maxHeight: 250)
+        }
+    }
+    
+    private func fileTreeRow(_ node: FileTreeNode, depth: Int) -> AnyView {
+        AnyView(VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 4) {
+                // Indent
+                if depth > 0 {
+                    Spacer()
+                        .frame(width: CGFloat(depth) * 16)
+                }
+                
+                // Disclosure triangle for directories
+                if node.isDirectory {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            node.isExpanded.toggle()
+                        }
+                    } label: {
+                        Image(systemName: node.isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2)
+                            .frame(width: 12, height: 12)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Spacer().frame(width: 12)
+                }
+                
+                // Three-state checkbox
+                ThreeStateCheckbox(state: node.selectionState) {
+                    node.toggle()
+                    if viewModel.hasResult {
+                        viewModel.rerenderChart()
+                    }
+                }
+                
+                // Icon
+                Image(systemName: node.isDirectory ? "folder.fill" : fileIcon(for: node.name))
+                    .font(.caption)
+                    .foregroundStyle(node.isDirectory ? .yellow : .secondary)
+                
+                // Name
+                Text(node.name)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(
+                        node.selectionState == .none ? .tertiary : .primary
+                    )
+                
+                Spacer()
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if node.isDirectory {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        node.isExpanded.toggle()
+                    }
+                }
+            }
+            
+            // Children (when expanded)
+            if node.isDirectory && node.isExpanded {
+                ForEach(node.children) { child in
+                    fileTreeRow(child, depth: depth + 1)
+                }
+            }
+        })
+    }
+    
+    private func fileIcon(for name: String) -> String {
+        let ext = (name as NSString).pathExtension.lowercased()
+        switch ext {
+        case "swift": return "swift"
+        case "py": return "doc.text"
+        case "js", "ts", "jsx", "tsx": return "doc.text"
+        case "html", "htm": return "globe"
+        case "css", "scss": return "paintbrush"
+        case "json", "yaml", "yml", "toml", "xml": return "gearshape"
+        case "md", "txt", "rst": return "doc.plaintext"
+        case "png", "jpg", "jpeg", "gif", "svg", "ico": return "photo"
+        default: return "doc"
         }
     }
 
@@ -373,6 +473,81 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Three-State Checkbox
+
+/// An NSViewRepresentable wrapping NSButton with allowsMixedState for three-state checkbox behavior.
+struct ThreeStateCheckbox: NSViewRepresentable {
+    let state: FileTreeNode.SelectionState
+    let action: () -> Void
+    
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(checkboxWithTitle: "", target: context.coordinator, action: #selector(Coordinator.clicked))
+        button.allowsMixedState = true
+        button.controlSize = .small
+        return button
+    }
+    
+    func updateNSView(_ button: NSButton, context: Context) {
+        switch state {
+        case .all: button.state = .on
+        case .none: button.state = .off
+        case .mixed: button.state = .mixed
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+    
+    class Coordinator: NSObject {
+        let action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func clicked() { action() }
+    }
+}
+
+// MARK: - Flow Layout for extension chips
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+    
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) -> CGSize {
+        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
+        return result.size
+    }
+    
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Void) {
+        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
+        for (index, position) in result.positions.enumerated() {
+            subviews[index].place(at: CGPoint(x: bounds.minX + position.x, y: bounds.minY + position.y), proposal: .unspecified)
+        }
+    }
+    
+    private func arrangeSubviews(proposal: ProposedViewSize, subviews: Subviews) -> (size: CGSize, positions: [CGPoint]) {
+        let maxWidth = proposal.width ?? .infinity
+        var positions: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var maxX: CGFloat = 0
+        
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth && x > 0 {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            positions.append(CGPoint(x: x, y: y))
+            rowHeight = max(rowHeight, size.height)
+            x += size.width + spacing
+            maxX = max(maxX, x)
+        }
+        
+        return (CGSize(width: maxX, height: y + rowHeight), positions)
     }
 }
 

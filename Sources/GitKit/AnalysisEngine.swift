@@ -12,23 +12,27 @@ public struct LineAgeBucket: Sendable {
 /// Configuration for the analysis.
 public struct AnalysisConfig: Sendable {
     public var sampleCount: Int
-    public var fileExtensions: Set<String>?
-    public var authors: Set<String>?  // nil = all authors
+    public var fileExtensions: Set<String>?  // legacy, still used by tests
+    public var filePaths: Set<String>?       // explicit set of file paths to include
+    public var authors: Set<String>?         // nil = all authors
     public var granularity: TimeGranularity
     
     public enum TimeGranularity: String, CaseIterable, Sendable {
         case year = "Year"
         case quarter = "Quarter"
+        case month = "Month"
     }
     
     public init(
         sampleCount: Int = 100,
         fileExtensions: Set<String>? = nil,
+        filePaths: Set<String>? = nil,
         authors: Set<String>? = nil,
         granularity: TimeGranularity = .quarter
     ) {
         self.sampleCount = sampleCount
         self.fileExtensions = fileExtensions
+        self.filePaths = filePaths
         self.authors = authors
         self.granularity = granularity
     }
@@ -91,7 +95,8 @@ public actor AnalysisEngine {
             let data = try await analyzeCommit(
                 repoPath: repoPath,
                 commit: commit,
-                extensions: config.fileExtensions
+                extensions: config.fileExtensions,
+                paths: config.filePaths
             )
             allRawData.append(contentsOf: data)
             
@@ -188,9 +193,10 @@ public actor AnalysisEngine {
     private func analyzeCommit(
         repoPath: URL,
         commit: GitCommit,
-        extensions: Set<String>?
+        extensions: Set<String>?,
+        paths: Set<String>?
     ) async throws -> [(commitTimestamp: TimeInterval, lineTimestamp: TimeInterval, info: CommitKey)] {
-        let files = try await repo.trackedFiles(at: commit.hash, extensions: extensions)
+        let files = try await repo.trackedFiles(at: commit.hash, extensions: extensions, paths: paths)
         let commitTS = commit.date.timeIntervalSince1970
         
         // Separate files into cached (already known) and uncached (need blame)
@@ -290,34 +296,44 @@ struct DateKey: Hashable {
     }
 }
 
-/// Compact period key stored as a UInt32. For year: YYYY0. For quarter: YYYYQ (e.g. 20241 = 2024-Q1).
+/// Compact period key stored as a UInt32.
+/// - Year:    YYYY * 100       (e.g. 202400)
+/// - Quarter: YYYY * 100 + Q   (e.g. 202401 = 2024-Q1)
+/// - Month:   YYYY * 100 + MM  (e.g. 202403 = 2024-03)
 struct PeriodKey: Hashable {
     let raw: UInt32
-    private let isQuarter: Bool
+    
+    private enum Kind: UInt8 { case year, quarter, month }
+    private let kind: Kind
     
     init(date: Date, granularity: AnalysisConfig.TimeGranularity, calendar: Calendar) {
         let comps = calendar.dateComponents([.year, .month], from: date)
-      
         let year = UInt32(comps.year!)
+        let month = UInt32(comps.month!)
         switch granularity {
         case .year:
-            raw = year * 10  // e.g. 20240
-            isQuarter = false
+            raw = year * 100
+            kind = .year
         case .quarter:
-            let quarter = UInt32((comps.month! - 1) / 3 + 1)
-            raw = year * 10 + quarter  // e.g. 20241 = 2024-Q1
-            isQuarter = true
+            let quarter = (month - 1) / 3 + 1
+            raw = year * 100 + quarter
+            kind = .quarter
+        case .month:
+            raw = year * 100 + month
+            kind = .month
         }
     }
     
     /// Converts back to display string for chart labels.
     var displayString: String {
-        if isQuarter {
-            let year = raw / 10
-            let quarter = raw % 10
-            return "\(year)-Q\(quarter)"
-        } else {
-            return "\(raw / 10)"
+        switch kind {
+        case .year:
+            return "\(raw / 100)"
+        case .quarter:
+            return "\(raw / 100)-Q\(raw % 100)"
+        case .month:
+            let mm = raw % 100
+            return "\(raw / 100)-\(String(format: "%02d", mm))"
         }
     }
 }

@@ -4,7 +4,7 @@ import GitKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Represents a discovered file extension with its selection state.
+/// Represents a discovered file extension with its selection state (used for preselection UI).
 @Observable
 final class ExtensionItem: Identifiable {
     let ext: String
@@ -58,6 +58,9 @@ final class AnalysisViewModel {
     var discoveredExtensions: [ExtensionItem] = []
     var discoveredContributors: [ContributorItem] = []
     var isLoadingExtensions: Bool = false
+    
+    // File tree
+    var fileTreeRoot: FileTreeNode?
 
     // State
     var isAnalyzing: Bool = false
@@ -70,8 +73,8 @@ final class AnalysisViewModel {
 
     var hasResult: Bool { svgString != nil }
 
-    var selectedExtensions: Set<String> {
-        Set(discoveredExtensions.filter(\.isSelected).map(\.ext))
+    var selectedFilePaths: Set<String> {
+        fileTreeRoot?.selectedFilePaths ?? []
     }
 
     var selectedAuthors: Set<String>? {
@@ -95,16 +98,26 @@ final class AnalysisViewModel {
             svgString = nil
             interactiveHTML = nil
             errorMessage = nil
-            loadExtensions()
+            loadRepoData()
         }
     }
 
-    func selectAll() {
-        for item in discoveredExtensions { item.isSelected = true }
+    /// Apply extension-based preselection to the file tree.
+    func applyExtensionPreselection() {
+        guard let root = fileTreeRoot else { return }
+        let selectedExts = Set(discoveredExtensions.filter(\.isSelected).map(\.ext))
+        root.selectByExtensions(selectedExts)
+        if hasResult {
+            rerenderChart()
+        }
     }
-
-    func selectNone() {
-        for item in discoveredExtensions { item.isSelected = false }
+    
+    func selectAllFiles() {
+        fileTreeRoot?.select(true)
+    }
+    
+    func selectNoFiles() {
+        fileTreeRoot?.select(false)
     }
 
     func selectAllContributors() {
@@ -115,17 +128,19 @@ final class AnalysisViewModel {
         for item in discoveredContributors { item.isSelected = false }
     }
 
-    private func loadExtensions() {
+    private func loadRepoData() {
         guard let repoPath else { return }
         isLoadingExtensions = true
         discoveredExtensions = []
         discoveredContributors = []
+        fileTreeRoot = nil
 
         Task {
             do {
                 let repo = try GitRepository(path: repoPath)
                 let commits = try await repo.allCommits()
                 let stats = try await repo.fileExtensionStats()
+                let filePaths = try await repo.trackedFilePaths()
 
                 await MainActor.run {
                     self.totalCommitCount = commits.count
@@ -138,6 +153,13 @@ final class AnalysisViewModel {
                             isTextType: s.isTextType
                         )
                     }
+                    
+                    // Build the file tree
+                    self.fileTreeRoot = FileTreeNode.buildTree(
+                        from: filePaths,
+                        textExtensions: GitRepository.knownTextExtensions
+                    )
+                    
                     // Discover contributors from commits
                     var authorCounts: [String: Int] = [:]
                     for commit in commits {
@@ -150,7 +172,7 @@ final class AnalysisViewModel {
                 }
             } catch {
                 await MainActor.run {
-                    self.errorMessage = "Failed to read extensions: \(error.localizedDescription)"
+                    self.errorMessage = "Failed to read repository: \(error.localizedDescription)"
                     self.isLoadingExtensions = false
                 }
             }
@@ -176,9 +198,9 @@ final class AnalysisViewModel {
     private func runAnalysis() {
         guard let repoPath else { return }
 
-        let selected = selectedExtensions
+        let selected = selectedFilePaths
         guard !selected.isEmpty else {
-            errorMessage = "Select at least one file extension"
+            errorMessage = "Select at least one file"
             return
         }
 
@@ -190,7 +212,7 @@ final class AnalysisViewModel {
 
         let config = AnalysisConfig(
             sampleCount: Int(sampleCount),
-            fileExtensions: selected,
+            filePaths: selected,
             granularity: granularity
         )
 
@@ -225,16 +247,18 @@ final class AnalysisViewModel {
         }
     }
 
-    /// Re-renders the chart from stored buckets, filtering by currently selected extensions and authors.
-    /// Called after analysis and whenever extension or contributor selection changes.
+    /// Re-renders the chart from stored buckets, filtering by currently selected files and authors.
     func rerenderChart() {
-        let selectedExts = selectedExtensions
+        let selectedPaths = selectedFilePaths
         let selectedAuth = selectedAuthors
-        guard !allBuckets.isEmpty, !selectedExts.isEmpty else {
+        guard !allBuckets.isEmpty, !selectedPaths.isEmpty else {
             svgString = nil
             interactiveHTML = nil
             return
         }
+        
+        // Compute the set of selected extensions from the selected paths
+        let selectedExts = Set(selectedPaths.map { "." + (($0 as NSString).pathExtension) })
         
         // Filter buckets by selected extensions and authors
         let filtered = allBuckets.filter { bucket in
@@ -246,7 +270,6 @@ final class AnalysisViewModel {
         }
         
         // Aggregate: combine line counts for same (commitDate, groupKey)
-        // groupKey is either the period or the author depending on chartMode
         var aggregated: [String: [String: Int]] = [:] // dateKey -> groupKey -> count
         var dateByKey: [String: Date] = [:]
         let dateFormatter = DateFormatter()

@@ -56,10 +56,11 @@ public actor GitRepository {
         public let blobHash: String
     }
     
-    /// Returns all tracked files at a given commit, optionally filtering by extension.
+    /// Returns all tracked files at a given commit, optionally filtering by extension or explicit path set.
     public func trackedFiles(
         at commitHash: String,
-        extensions: Set<String>? = nil
+        extensions: Set<String>? = nil,
+        paths: Set<String>? = nil
     ) throws -> [TrackedFile] {
         let output = try runGit(["ls-tree", "-r", commitHash])
         var files: [TrackedFile] = []
@@ -72,6 +73,11 @@ public actor GitRepository {
             guard metaParts.count >= 3 else { continue }
             let blobHash = String(metaParts[2])
             
+            // Filter by explicit path set if specified
+            if let paths = paths {
+                guard paths.contains(filePath) else { continue }
+            }
+            
             // Filter by extension if specified
             if let extensions = extensions {
                 let ext = (filePath as NSString).pathExtension
@@ -81,6 +87,12 @@ public actor GitRepository {
             files.append(TrackedFile(path: filePath, blobHash: blobHash))
         }
         return files
+    }
+    
+    /// Returns all tracked file paths at HEAD.
+    public func trackedFilePaths() throws -> [String] {
+        let output = try runGit(["ls-tree", "-r", "--name-only", "HEAD"])
+        return output.split(separator: "\n").map(String.init)
     }
     
     // MARK: - Extension Discovery
