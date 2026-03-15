@@ -22,6 +22,7 @@ public struct ChartData {
     public let maxLineCount: Double
     public let allPeriods: [String]  // sorted chronologically
     public let versionMarkers: [VersionMarker]
+    public let legendTitle: String   // "Period Added" or "Author"
 
     public var isEmpty: Bool { series.isEmpty }
 }
@@ -47,7 +48,7 @@ public struct StackedAreaChart {
         versionMarkers: [(date: Date, label: String, fullVersion: String, author: String, source: String)] = []
     ) -> ChartData {
         guard !buckets.isEmpty else {
-            return ChartData(series: [], commitDates: [], maxLineCount: 0, allPeriods: [], versionMarkers: [])
+            return ChartData(series: [], commitDates: [], maxLineCount: 0, allPeriods: [], versionMarkers: [], legendTitle: "Period Added")
         }
 
         // Collect unique commit dates (sorted) and periods (sorted)
@@ -58,12 +59,30 @@ public struct StackedAreaChart {
             periodSet.insert(b.period)
         }
         let commitDates = commitDateSet.sorted()
-        let periods = periodSet.sorted()
 
         // Build lookup: commitDate -> period -> lineCount
         var lookup: [Date: [String: Int]] = [:]
         for b in buckets {
             lookup[b.commitDate, default: [:]][b.period] = b.lineCount
+        }
+
+        // Sort periods: if they look like date-based periods (e.g. "2023-Q1"), sort
+        // chronologically. Otherwise (author names), sort by total line count descending
+        // so the most prolific contributor is at the bottom of the stack.
+        let periods: [String]
+        let looksChronological = periodSet.contains { $0.hasPrefix("20") || $0.hasPrefix("19") }
+        let legendTitle = looksChronological ? "Period Added" : "Author"
+        if looksChronological {
+            periods = periodSet.sorted()
+        } else {
+            // Sum total lines per period across all commits
+            var totalByPeriod: [String: Int] = [:]
+            for (_, periodCounts) in lookup {
+                for (period, count) in periodCounts {
+                    totalByPeriod[period, default: 0] += count
+                }
+            }
+            periods = periodSet.sorted { totalByPeriod[$0, default: 0] > totalByPeriod[$1, default: 0] }
         }
 
         // Find max total for y-axis
@@ -77,7 +96,7 @@ public struct StackedAreaChart {
 
         guard maxTotal > 0 else {
             return ChartData(
-                series: [], commitDates: commitDates, maxLineCount: 0, allPeriods: periods, versionMarkers: [])
+                series: [], commitDates: commitDates, maxLineCount: 0, allPeriods: periods, versionMarkers: [], legendTitle: legendTitle)
         }
 
         // Build stacked series
@@ -137,7 +156,8 @@ public struct StackedAreaChart {
             commitDates: commitDates,
             maxLineCount: maxTotal,
             allPeriods: periods,
-            versionMarkers: chartMarkers
+            versionMarkers: chartMarkers,
+            legendTitle: legendTitle
         )
     }
 }

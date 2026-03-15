@@ -72,20 +72,20 @@ public struct SVGRenderer {
             svg += renderArea(series, plotWidth: plotWidth, plotHeight: plotHeight, maxY: data.maxLineCount)
         }
         
-        // Version markers (vertical dashed lines with labels on alternating rows)
-        for (i, marker) in data.versionMarkers.enumerated() {
+        // Version markers (vertical dashed lines with vertical labels)
+        for marker in data.versionMarkers {
             let x = fmt(marker.x * plotWidth)
-            let labelY = i % 2 == 0 ? "-6" : "-20"  // alternate top/bottom row
             
-            // Line
+            // Dashed line
             svg += "<line x1=\"\(x)\" y1=\"-2\" x2=\"\(x)\" y2=\"\(fmt(plotHeight))\" "
             svg += "stroke=\"rgba(255,255,255,0.4)\" stroke-width=\"1\" stroke-dasharray=\"6,4\"/>\n"
             
-            // Label with tooltip
+            // Vertical label with tooltip
             svg += "<g cursor=\"default\">\n"
             svg += "  <title>\(escapeXML(marker.tooltipText))</title>\n"
-            svg += "  <text x=\"\(x)\" y=\"\(labelY)\" "
-            svg += "text-anchor=\"middle\" fill=\"rgba(255,255,255,0.8)\" font-size=\"10\" font-weight=\"600\">"
+            svg += "  <text x=\"\(x)\" y=\"-8\" "
+            svg += "transform=\"rotate(-90, \(x), -8)\" "
+            svg += "text-anchor=\"start\" fill=\"rgba(255,255,255,0.8)\" font-size=\"10\" font-weight=\"600\">"
             svg += "\(escapeXML(marker.label))</text>\n"
             svg += "</g>\n"
         }
@@ -405,13 +405,17 @@ public struct SVGRenderer {
         var svg = ""
         svg += "<text x=\"\(fmt(legendX))\" y=\"\(fmt(legendY - 5))\" "
         svg += "fill=\"\(config.textColor)\" font-size=\"12\" font-weight=\"600\">"
-        svg += "Period Added</text>\n"
+        svg += "\(escapeXML(data.legendTitle))</text>\n"
         
-        // Show periods in reverse order (newest first in legend) with scrolling
+        // For chronological periods, show newest first (reversed).
+        // For authors, series is already sorted by contribution (most first) — show as-is.
+        let isAuthorMode = data.legendTitle == "Author"
         let maxLegendItems = min(data.allPeriods.count, 20)
-        //let periodsToShow = Array(data.allPeriods.suffix(maxLegendItems).reversed())
+        let legendSeries = isAuthorMode
+            ? Array(data.series.prefix(maxLegendItems))
+            : Array(data.series.reversed().prefix(maxLegendItems))
         
-        for (i, series) in data.series.reversed().prefix(maxLegendItems).enumerated() {
+        for (i, series) in legendSeries.enumerated() {
             let y = legendY + Double(i) * itemHeight + 15
             
             // Color swatch
