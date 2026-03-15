@@ -259,7 +259,10 @@ public actor GitRepository {
     /// A version marker with a date and label, for overlaying on charts.
     public struct VersionMarker: Sendable {
         public let date: Date
-        public let version: String  // e.g. "1.2" or "v2.0"
+        public let version: String      // major.minor e.g. "1.2"
+        public let fullVersion: String   // full tag name or version string
+        public let author: String        // tagger or commit author
+        public let source: String        // "tag" or "pom"
     }
     
     /// Extracts version markers from git tags and/or pom.xml.
@@ -270,10 +273,9 @@ public actor GitRepository {
         var seenVersions = Set<String>()
         
         // Try git tags first
-        // Format: <unix_timestamp> <tagname>
         if let tagOutput = try? runGit([
             "tag", "--sort=creatordate",
-            "--format=%(creatordate:unix) %(refname:short)"
+            "--format=%(creatordate:unix)\t%(refname:short)"
         ]), !tagOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let versionPattern = try NSRegularExpression(
                 pattern: #"[vV]?(\d+)\.(\d+)(?:\.\d+)?"#
@@ -281,9 +283,10 @@ public actor GitRepository {
             
             for line in tagOutput.split(separator: "\n") {
                 let str = String(line)
-                guard let spaceIdx = str.firstIndex(of: " ") else { continue }
-                let tsStr = String(str[str.startIndex..<spaceIdx])
-                let tagName = String(str[str.index(after: spaceIdx)...])
+                let tabParts = str.split(separator: "\t", maxSplits: 1)
+                guard tabParts.count == 2 else { continue }
+                let tsStr = String(tabParts[0]).trimmingCharacters(in: .whitespaces)
+                let tagName = String(tabParts[1])
                 guard let ts = TimeInterval(tsStr) else { continue }
                 
                 let range = NSRange(tagName.startIndex..., in: tagName)
@@ -296,9 +299,16 @@ public actor GitRepository {
                 guard !seenVersions.contains(majorMinor) else { continue }
                 seenVersions.insert(majorMinor)
                 
+                // Get author of the tagged commit
+                let author = (try? runGit(["log", "-1", "--format=%aN", tagName]))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                
                 markers.append(VersionMarker(
                     date: Date(timeIntervalSince1970: ts),
-                    version: majorMinor
+                    version: majorMinor,
+                    fullVersion: tagName,
+                    author: author,
+                    source: "tag"
                 ))
             }
         }
@@ -319,9 +329,9 @@ public actor GitRepository {
             return []
         }
         
-        // Get commits that modified pom.xml (oldest first) with timestamps
+        // Get commits that modified pom.xml (oldest first) with timestamps and author
         let logOutput = try runGit([
-            "log", "--format=%H %at", "--reverse", "--diff-filter=AM", "--", "pom.xml"
+            "log", "--format=%H %at %aN", "--reverse", "--diff-filter=AM", "--", "pom.xml"
         ])
         
         let versionPattern = try NSRegularExpression(
@@ -332,14 +342,19 @@ public actor GitRepository {
         var seenVersions = Set<String>()
         
         for line in logOutput.split(separator: "\n") {
-            let parts = line.split(separator: " ")
+            let parts = line.split(separator: " ", maxSplits: 2)
             guard parts.count >= 2,
                   let ts = TimeInterval(parts[1]) else { continue }
             let hash = String(parts[0])
+            let author = parts.count >= 3 ? String(parts[2]) : ""
             
             // Read pom.xml at this commit
             guard let content = try? runGit(["show", "\(hash):pom.xml"]) else { continue }
             
+            // Match the first <version> tag for the full version
+            let fullVersionPattern = try NSRegularExpression(
+                pattern: #"<version>([^<]+)</version>"#
+            )
             let range = NSRange(content.startIndex..., in: content)
             guard let match = versionPattern.firstMatch(in: content, range: range) else { continue }
             
@@ -350,9 +365,21 @@ public actor GitRepository {
             guard !seenVersions.contains(majorMinor) else { continue }
             seenVersions.insert(majorMinor)
             
+            // Get full version string
+            let fullVersion: String
+            if let fvMatch = fullVersionPattern.firstMatch(in: content, range: range),
+               let fvRange = Range(fvMatch.range(at: 1), in: content) {
+                fullVersion = String(content[fvRange])
+            } else {
+                fullVersion = majorMinor
+            }
+            
             markers.append(VersionMarker(
                 date: Date(timeIntervalSince1970: ts),
-                version: majorMinor
+                version: majorMinor,
+                fullVersion: fullVersion,
+                author: author,
+                source: "pom"
             ))
         }
         

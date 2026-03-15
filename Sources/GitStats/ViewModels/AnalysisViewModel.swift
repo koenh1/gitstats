@@ -69,7 +69,7 @@ final class AnalysisViewModel {
     var totalFileCount: Int = 0
     
     // Version markers
-    var versionMarkers: [(date: Date, label: String)] = []
+    var versionMarkers: [(date: Date, label: String, fullVersion: String, author: String, source: String)] = []
     var showVersionMarkers: Bool = true
 
     // State
@@ -225,7 +225,7 @@ final class AnalysisViewModel {
                     Task {
                         if let markers = try? await repo.versionMarkers() {
                             await MainActor.run {
-                                self.versionMarkers = markers.map { ($0.date, $0.version) }
+                                self.versionMarkers = markers.map { ($0.date, $0.version, $0.fullVersion, $0.author, $0.source) }
                             }
                         }
                     }

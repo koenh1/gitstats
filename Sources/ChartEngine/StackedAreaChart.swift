@@ -12,8 +12,9 @@ public struct ChartData {
     
     /// A version marker with an x-position (0-1) and label.
     public struct VersionMarker {
-        public let x: Double    // normalized 0-1 position on x-axis
-        public let label: String
+        public let x: Double       // normalized 0-1 position on x-axis
+        public let label: String   // short label (major.minor)
+        public let tooltipText: String  // full tooltip: date + author + version
     }
 
     public let series: [Series]
@@ -43,7 +44,7 @@ public struct StackedAreaChart {
     /// Builds stacked chart data from an array of buckets, with optional version markers.
     public static func build(
         from buckets: [Bucket],
-        versionMarkers: [(date: Date, label: String)] = []
+        versionMarkers: [(date: Date, label: String, fullVersion: String, author: String, source: String)] = []
     ) -> ChartData {
         guard !buckets.isEmpty else {
             return ChartData(series: [], commitDates: [], maxLineCount: 0, allPeriods: [], versionMarkers: [])
@@ -115,10 +116,17 @@ public struct StackedAreaChart {
         let chartMarkers: [ChartData.VersionMarker]
         if !versionMarkers.isEmpty, let firstDate = commitDates.first, let lastDate = commitDates.last {
             let span = lastDate.timeIntervalSince(firstDate)
+            let dateFmt = DateFormatter()
+            dateFmt.dateStyle = .medium
             chartMarkers = span > 0 ? versionMarkers.compactMap { vm in
                 let x = vm.date.timeIntervalSince(firstDate) / span
                 guard x >= 0 && x <= 1 else { return nil }
-                return ChartData.VersionMarker(x: x, label: vm.label)
+                var tooltip = "\(vm.fullVersion)\n\(dateFmt.string(from: vm.date))"
+                if !vm.author.isEmpty {
+                    tooltip += "\n\(vm.author)"
+                }
+                tooltip += "\n(source: \(vm.source))"
+                return ChartData.VersionMarker(x: x, label: vm.label, tooltipText: tooltip)
             } : []
         } else {
             chartMarkers = []

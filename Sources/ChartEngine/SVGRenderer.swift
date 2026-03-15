@@ -19,7 +19,7 @@ public struct SVGRenderer {
             public var bottom: Double
             public var left: Double
             
-            public init(top: Double = 60, right: Double = 200, bottom: Double = 80, left: Double = 80) {
+            public init(top: Double = 80, right: Double = 200, bottom: Double = 80, left: Double = 80) {
                 self.top = top
                 self.right = right
                 self.bottom = bottom
@@ -72,14 +72,22 @@ public struct SVGRenderer {
             svg += renderArea(series, plotWidth: plotWidth, plotHeight: plotHeight, maxY: data.maxLineCount)
         }
         
-        // Version markers (vertical dashed lines with labels)
-        for marker in data.versionMarkers {
+        // Version markers (vertical dashed lines with labels on alternating rows)
+        for (i, marker) in data.versionMarkers.enumerated() {
             let x = fmt(marker.x * plotWidth)
-            svg += "<line x1=\"\(x)\" y1=\"0\" x2=\"\(x)\" y2=\"\(fmt(plotHeight))\" "
-            svg += "stroke=\"rgba(255,255,255,0.5)\" stroke-width=\"1\" stroke-dasharray=\"6,4\"/>\n"
-            svg += "<text x=\"\(x)\" y=\"-6\" "
+            let labelY = i % 2 == 0 ? "-6" : "-20"  // alternate top/bottom row
+            
+            // Line
+            svg += "<line x1=\"\(x)\" y1=\"-2\" x2=\"\(x)\" y2=\"\(fmt(plotHeight))\" "
+            svg += "stroke=\"rgba(255,255,255,0.4)\" stroke-width=\"1\" stroke-dasharray=\"6,4\"/>\n"
+            
+            // Label with tooltip
+            svg += "<g cursor=\"default\">\n"
+            svg += "  <title>\(escapeXML(marker.tooltipText))</title>\n"
+            svg += "  <text x=\"\(x)\" y=\"\(labelY)\" "
             svg += "text-anchor=\"middle\" fill=\"rgba(255,255,255,0.8)\" font-size=\"10\" font-weight=\"600\">"
             svg += "\(escapeXML(marker.label))</text>\n"
+            svg += "</g>\n"
         }
         
         // Axes
