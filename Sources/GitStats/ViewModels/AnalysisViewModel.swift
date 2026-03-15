@@ -118,6 +118,7 @@ final class AnalysisViewModel {
     
     func selectNoFiles() {
         fileTreeRoot?.select(false)
+        for item in discoveredExtensions { item.isSelected = false }
     }
 
     func selectAllContributors() {
