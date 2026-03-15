@@ -201,10 +201,14 @@ final class AnalysisViewModel {
                     // Auto-select granularity: finest where period count < 20
                     if let first = commits.first?.date, let last = commits.last?.date {
                         let cal = Calendar(identifier: .gregorian)
-                        let months = cal.dateComponents([.month], from: first, to: last).month ?? 0
-                        if months < 20 {
+                        let days = cal.dateComponents([.day], from: first, to: last).day ?? 0
+                        if days < 20 {
+                            self.granularity = .day
+                        } else if days < 20 * 7 {
+                            self.granularity = .week
+                        } else if days < 20 * 30 {
                             self.granularity = .month
-                        } else if months < 20 * 3 {
+                        } else if days < 20 * 91 {
                             self.granularity = .quarter
                         } else {
                             self.granularity = .year

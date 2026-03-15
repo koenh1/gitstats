@@ -169,9 +169,9 @@ struct ContentView: View {
                 Text("Time granularity")
                     .font(.caption)
                 Picker("", selection: $viewModel.granularity) {
-                    Text("Year").tag(AnalysisConfig.TimeGranularity.year)
-                    Text("Quarter").tag(AnalysisConfig.TimeGranularity.quarter)
-                    Text("Month").tag(AnalysisConfig.TimeGranularity.month)
+                    ForEach(AnalysisConfig.TimeGranularity.allCases, id: \.self) { g in
+                        Text(g.rawValue).tag(g)
+                    }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()

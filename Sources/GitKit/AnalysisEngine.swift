@@ -22,6 +22,8 @@ public struct AnalysisConfig: Sendable {
         case year = "Year"
         case quarter = "Quarter"
         case month = "Month"
+        case week = "Week"
+        case day = "Day"
     }
     
     public init(
@@ -300,43 +302,58 @@ struct DateKey: Hashable {
 }
 
 /// Compact period key stored as a UInt32.
-/// - Year:    YYYY * 100       (e.g. 202400)
-/// - Quarter: YYYY * 100 + Q   (e.g. 202401 = 2024-Q1)
-/// - Month:   YYYY * 100 + MM  (e.g. 202403 = 2024-03)
+/// - Year:    YYYY * 10000                 (e.g. 20240000)
+/// - Quarter: YYYY * 10000 + Q * 100       (e.g. 20240100 = 2024-Q1)
+/// - Month:   YYYY * 10000 + MM * 100      (e.g. 20240300 = 2024-03)
+/// - Week:    YYYY * 10000 + WW * 100      (e.g. 20241500 = 2024-W15)
+/// - Day:     YYYY * 10000 + MM * 100 + DD (e.g. 20240315 = 2024-03-15)
 struct PeriodKey: Hashable {
     let raw: UInt32
     
-    private enum Kind: UInt8 { case year, quarter, month }
+    private enum Kind: UInt8 { case year, quarter, month, week, day }
     private let kind: Kind
     
     init(date: Date, granularity: AnalysisConfig.TimeGranularity, calendar: Calendar) {
-        let comps = calendar.dateComponents([.year, .month], from: date)
+        let comps = calendar.dateComponents([.year, .month, .day, .weekOfYear], from: date)
         let year = UInt32(comps.year!)
         let month = UInt32(comps.month!)
         switch granularity {
         case .year:
-            raw = year * 100
+            raw = year * 10000
             kind = .year
         case .quarter:
             let quarter = (month - 1) / 3 + 1
-            raw = year * 100 + quarter
+            raw = year * 10000 + quarter * 100
             kind = .quarter
         case .month:
-            raw = year * 100 + month
+            raw = year * 10000 + month * 100
             kind = .month
+        case .week:
+            let week = UInt32(comps.weekOfYear!)
+            raw = year * 10000 + week * 100
+            kind = .week
+        case .day:
+            let day = UInt32(comps.day!)
+            raw = year * 10000 + month * 100 + day
+            kind = .day
         }
     }
     
     /// Converts back to display string for chart labels.
     var displayString: String {
+        let y = raw / 10000
+        let rest = raw % 10000
         switch kind {
         case .year:
-            return "\(raw / 100)"
+            return "\(y)"
         case .quarter:
-            return "\(raw / 100)-Q\(raw % 100)"
+            return "\(y)-Q\(rest / 100)"
         case .month:
-            let mm = raw % 100
-            return "\(raw / 100)-\(String(format: "%02d", mm))"
+            return "\(y)-\(String(format: "%02d", rest / 100))"
+        case .week:
+            return "\(y)-W\(String(format: "%02d", rest / 100))"
+        case .day:
+            return "\(y)-\(String(format: "%02d", rest / 100))-\(String(format: "%02d", rest % 100))"
         }
     }
 }
