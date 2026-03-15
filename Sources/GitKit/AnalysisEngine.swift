@@ -128,8 +128,15 @@ public actor AnalysisEngine {
             print("Version-refined sampling: \(sampled.count) commits (from \(config.sampleCount) initial)")
         }
         
-        // 3. Collect blame data for each sampled commit
-        var allRawData: [(commitTimestamp: TimeInterval, lineTimestamp: TimeInterval, info: CommitKey)] = []
+        // 3. Collect blame data for each sampled commit, tagged with a sample index
+        //    so that each commit stays a distinct snapshot (even if two commits share a day).
+        struct RawEntry {
+            let sampleIndex: Int
+            let commitTimestamp: TimeInterval
+            let lineTimestamp: TimeInterval
+            let info: CommitKey
+        }
+        var allRawData: [RawEntry] = []
         
         for (index, commit) in sampled.enumerated() {
             let data = try await analyzeCommit(
@@ -138,7 +145,14 @@ public actor AnalysisEngine {
                 extensions: config.fileExtensions,
                 paths: config.filePaths
             )
-            allRawData.append(contentsOf: data)
+            for d in data {
+                allRawData.append(RawEntry(
+                    sampleIndex: index,
+                    commitTimestamp: d.0,
+                    lineTimestamp: d.1,
+                    info: d.2
+                ))
+            }
             
             onProgress(AnalysisProgress(
                 completed: index + 1,
@@ -149,30 +163,15 @@ public actor AnalysisEngine {
         
         print("Blame cache: \(cacheHits) hits, \(cacheMisses) misses (\(blameCache.count) unique blobs)")
         
-        // 4. Aggregate into buckets using compact integer keys (avoids String allocation)
-        //    Optimization: sort indices by timestamp, then compute DateKey/PeriodKey
-        //    incrementally — only constructing a new key when the timestamp changes.
+        // 4. Aggregate into buckets keyed by sample index (not date) to prevent
+        //    multiple commits on the same day from merging their line counts.
         let calendar = Calendar(identifier: .gregorian)
         let count = allRawData.count
         guard count > 0 else { return [] }
         
-        var commitDateByKey: [DateKey: Double] = [:]
-        var bucketMap: [DateKey: [PeriodKey: [CommitKey: Int]]] = [:]
         let granularity = config.granularity
-        
-        // Pre-compute DateKey for each entry by sorting indices by commitTimestamp
-        var commitKeyArray = [DateKey](repeating: DateKey(date: Date(), calendar: calendar), count: count)
-        let commitSortedIndices = (0..<count).sorted { allRawData[$0].commitTimestamp < allRawData[$1].commitTimestamp }
-        var prevCommitTS = allRawData[commitSortedIndices[0]].commitTimestamp - 1  // force first key creation
-        var currentCommitKey = commitKeyArray[0]
-        for idx in commitSortedIndices {
-            let ts = allRawData[idx].commitTimestamp
-            if ts > prevCommitTS {
-                prevCommitTS = ts
-                currentCommitKey = DateKey(date: Date(timeIntervalSince1970: ts), calendar: calendar)
-            }
-            commitKeyArray[idx] = currentCommitKey
-        }
+        var commitDateBySample: [Int: Double] = [:]
+        var bucketMap: [Int: [PeriodKey: [CommitKey: Int]]] = [:]
         
         // Pre-compute PeriodKey for each entry by sorting indices by lineTimestamp
         var periodKeyArray = [PeriodKey](repeating: PeriodKey(date: Date(), granularity: granularity, calendar: calendar), count: count)
@@ -188,29 +187,29 @@ public actor AnalysisEngine {
             periodKeyArray[idx] = currentPeriodKey
         }
         
-        // Aggregate using pre-computed keys
+        // Aggregate using sample index as the primary key
         for i in 0..<count {
             let entry = allRawData[i]
-            let commitKey = commitKeyArray[i]
+            let sampleIdx = entry.sampleIndex
             let period = periodKeyArray[i]
             
-            if commitDateByKey[commitKey] == nil {
-                commitDateByKey[commitKey] = entry.commitTimestamp
+            if commitDateBySample[sampleIdx] == nil {
+                commitDateBySample[sampleIdx] = entry.commitTimestamp
             }
             
-            bucketMap[commitKey, default: [:]][period, default: [:]][entry.info, default: 0] += 1
+            bucketMap[sampleIdx, default: [:]][period, default: [:]][entry.info, default: 0] += 1
         }
         
         // 5. Convert to output array (one bucket per commit × period × extension)
         var results: [LineAgeBucket] = []
-        for (commitKey, periods) in bucketMap {
-            guard let commitDate = commitDateByKey[commitKey] else { continue }
+        for (sampleIdx, periods) in bucketMap {
+            guard let commitDate = commitDateBySample[sampleIdx] else { continue }
             for (period, infocounts) in periods {
-                for (info, count) in infocounts {
+                for (info, lineCount) in infocounts {
                     results.append(LineAgeBucket(
                         commitDate: Date(timeIntervalSince1970: commitDate),
                         period: period.displayString,
-                        lineCount: count,
+                        lineCount: lineCount,
                         fileExtension: info.ext,
                         filePath: info.path,
                         commitAuthor: info.author

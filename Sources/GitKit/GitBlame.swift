@@ -48,6 +48,7 @@ public struct GitBlame: Sendable {
       process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
       process.arguments = ["blame", "-t", commitHash, "--", filePath]
       process.currentDirectoryURL = repoPath
+      print(process.arguments!)
       
       let pipe = Pipe()
       process.standardOutput = pipe
@@ -170,6 +171,7 @@ public struct GitBlame: Sendable {
             
             var lineCount = 1
             for i in 0..<count where base[i] == newline { lineCount += 1 }
+          print("lines: \(lineCount)")
             var results: [BlameLine] = []
             results.reserveCapacity(lineCount)
             
