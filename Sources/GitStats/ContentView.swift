@@ -456,6 +456,8 @@ struct ContentView: View {
         Group {
             if let html = viewModel.interactiveHTML {
                 SVGPreviewView(htmlString: html)
+            } else if !viewModel.discoveredExtensions.isEmpty && !viewModel.isLoadingExtensions {
+                extensionPieChart
             } else {
                 emptyState
             }
@@ -473,6 +475,15 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    // MARK: - Extension Pie Chart
+    
+    private var extensionPieChart: some View {
+        ExtensionPieChartView(
+            extensions: viewModel.discoveredExtensions.filter { $0.isTextType && $0.lineCount > 0 },
+            repoName: viewModel.repoName
+        )
     }
 }
 
@@ -564,5 +575,134 @@ struct SVGPreviewView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         webView.loadHTMLString(htmlString, baseURL: nil)
+    }
+}
+
+// MARK: - Extension Pie Chart
+
+struct ExtensionPieChartView: View {
+    let extensions: [ExtensionItem]
+    let repoName: String
+    
+    private static let colors: [Color] = [
+        Color(hue: 0.58, saturation: 0.65, brightness: 0.85),  // blue
+        Color(hue: 0.85, saturation: 0.55, brightness: 0.80),  // purple
+        Color(hue: 0.35, saturation: 0.60, brightness: 0.75),  // green
+        Color(hue: 0.08, saturation: 0.65, brightness: 0.90),  // orange
+        Color(hue: 0.55, saturation: 0.50, brightness: 0.80),  // teal
+        Color(hue: 0.95, saturation: 0.55, brightness: 0.85),  // pink
+        Color(hue: 0.15, saturation: 0.60, brightness: 0.85),  // yellow
+        Color(hue: 0.70, saturation: 0.45, brightness: 0.75),  // indigo
+        Color(hue: 0.45, saturation: 0.55, brightness: 0.70),  // cyan
+        Color(hue: 0.02, saturation: 0.60, brightness: 0.80),  // red
+        Color(hue: 0.28, saturation: 0.50, brightness: 0.70),  // lime
+        Color(hue: 0.78, saturation: 0.40, brightness: 0.70),  // lavender
+    ]
+    
+    private var sortedExtensions: [ExtensionItem] {
+        extensions.sorted { $0.lineCount > $1.lineCount }
+    }
+    
+    private var totalLines: Int {
+        extensions.reduce(0) { $0 + $1.lineCount }
+    }
+    
+    var body: some View {
+        VStack(spacing: 24) {
+            Text(repoName)
+                .font(.title2.bold())
+                .foregroundStyle(.primary)
+            
+            Text("Lines of Code by Extension")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            
+            HStack(spacing: 40) {
+                // Pie chart
+                pieChart
+                    .frame(width: 280, height: 280)
+                
+                // Legend
+                legend
+                    .frame(maxWidth: 250)
+            }
+            
+            Text("\(formatLargeCount(totalLines)) total lines")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+    
+    private var pieChart: some View {
+        Canvas { context, size in
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            let outerRadius = min(size.width, size.height) / 2 - 4
+            let innerRadius = outerRadius * 0.55
+            let total = Double(totalLines)
+            guard total > 0 else { return }
+            
+            var startAngle = Angle.degrees(-90)
+            
+            for (index, ext) in sortedExtensions.enumerated() {
+                let fraction = Double(ext.lineCount) / total
+                let sweepAngle = Angle.degrees(fraction * 360)
+                let endAngle = startAngle + sweepAngle
+                
+                var path = Path()
+                path.addArc(center: center, radius: outerRadius,
+                           startAngle: startAngle, endAngle: endAngle, clockwise: false)
+                path.addArc(center: center, radius: innerRadius,
+                           startAngle: endAngle, endAngle: startAngle, clockwise: true)
+                path.closeSubpath()
+                
+                let color = Self.colors[index % Self.colors.count]
+                context.fill(path, with: .color(color))
+                
+                // Subtle gap between slices
+                context.stroke(path, with: .color(Color(nsColor: .windowBackgroundColor)), lineWidth: 1.5)
+                
+                startAngle = endAngle
+            }
+        }
+    }
+    
+    private var legend: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(sortedExtensions.enumerated()), id: \.element.id) { index, ext in
+                    HStack(spacing: 8) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Self.colors[index % Self.colors.count])
+                            .frame(width: 12, height: 12)
+                        
+                        Text(ext.ext)
+                            .font(.caption.monospaced().bold())
+                        
+                        Spacer()
+                        
+                        let pct = totalLines > 0 ? Double(ext.lineCount) / Double(totalLines) * 100 : 0
+                        Text("\(formatLargeCount(ext.lineCount))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        
+                        Text(String(format: "%.1f%%", pct))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 48, alignment: .trailing)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func formatLargeCount(_ value: Int) -> String {
+        if value >= 1_000_000 {
+            return String(format: "%.1fM", Double(value) / 1_000_000)
+        } else if value >= 1_000 {
+            return String(format: "%.1fK", Double(value) / 1_000)
+        } else {
+            return "\(value)"
+        }
     }
 }

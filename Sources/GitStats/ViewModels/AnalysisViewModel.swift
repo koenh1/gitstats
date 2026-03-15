@@ -257,12 +257,9 @@ final class AnalysisViewModel {
             return
         }
         
-        // Compute the set of selected extensions from the selected paths
-        let selectedExts = Set(selectedPaths.map { "." + (($0 as NSString).pathExtension) })
-        
-        // Filter buckets by selected extensions and authors
+        // Filter buckets by selected file paths and authors
         let filtered = allBuckets.filter { bucket in
-            guard selectedExts.contains(bucket.fileExtension) else { return false }
+            guard selectedPaths.contains(bucket.filePath) else { return false }
             if let authors = selectedAuth {
                 return authors.contains(bucket.commitAuthor)
             }

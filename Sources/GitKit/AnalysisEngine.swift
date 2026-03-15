@@ -6,6 +6,7 @@ public struct LineAgeBucket: Sendable {
     public let period: String      // e.g. "2023" or "2023-Q1"
     public let lineCount: Int
     public let fileExtension: String  // e.g. ".swift"
+    public let filePath: String       // e.g. "Sources/Foo.swift"
     public let commitAuthor: String   // e.g. "Alice"
 }
 
@@ -41,6 +42,7 @@ public struct AnalysisConfig: Sendable {
 struct CommitKey: Hashable, Sendable {
   let author: String
   let ext: String
+  let path: String
 }
 
 /// Progress reporting during analysis.
@@ -172,6 +174,7 @@ public actor AnalysisEngine {
                         period: period.displayString,
                         lineCount: count,
                         fileExtension: info.ext,
+                        filePath: info.path,
                         commitAuthor: info.author
                     ))
                 }
@@ -209,7 +212,7 @@ public actor AnalysisEngine {
                 // Cache hit — reuse previous blame result
                 cacheHits += 1
                 for line in cached {
-                    allResults.append((commitTS, line.timestamp, CommitKey(author: line.author, ext: ext)))
+                    allResults.append((commitTS, line.timestamp, CommitKey(author: line.author, ext: ext, path: file.path)))
                 }
             } else {
                 uncachedFiles.append(file)
@@ -219,13 +222,13 @@ public actor AnalysisEngine {
         // Blame uncached files concurrently
         if !uncachedFiles.isEmpty {
             let blameResults = try await withThrowingTaskGroup(
-                of: (String, String, [GitBlame.BlameLine]).self,  // (blobHash, ext, blameLines)
-                returning: [(String, String, [GitBlame.BlameLine])].self
+                of: (String, String, String, [GitBlame.BlameLine]).self,  // (blobHash, ext, filePath, blameLines)
+                returning: [(String, String, String, [GitBlame.BlameLine])].self
             ) { group in
                 let maxConcurrent = 16
                 var pending = 0
                 var fileIterator = uncachedFiles.makeIterator()
-                var results: [(String, String, [GitBlame.BlameLine])] = []
+                var results: [(String, String, String, [GitBlame.BlameLine])] = []
                 
                 // Seed initial batch
                 for _ in 0..<min(maxConcurrent, uncachedFiles.count) {
@@ -239,7 +242,7 @@ public actor AnalysisEngine {
                                 commitHash: commit.hash,
                                 filePath: filePath
                             )
-                            return (blobHash, fileExt, blameLines)
+                            return (blobHash, fileExt, filePath, blameLines)
                         }
                         pending += 1
                     }
@@ -260,7 +263,7 @@ public actor AnalysisEngine {
                                     commitHash: commit.hash,
                                     filePath: filePath
                                 )
-                                return (blobHash, fileExt, blameLines)
+                                return (blobHash, fileExt, filePath, blameLines)
                             }
                             pending += 1
                         }
@@ -271,11 +274,11 @@ public actor AnalysisEngine {
             }
             
             // Store results in cache and accumulate
-            for (blobHash, ext, blameLines) in blameResults {
+            for (blobHash, ext, filePath, blameLines) in blameResults {
                 cacheMisses += 1
                 blameCache[blobHash] = blameLines
                 for line in blameLines {
-                    allResults.append((commitTS, line.timestamp, CommitKey(author: line.author, ext: ext)))
+                    allResults.append((commitTS, line.timestamp, CommitKey(author: line.author, ext: ext, path: filePath)))
                 }
             }
         }

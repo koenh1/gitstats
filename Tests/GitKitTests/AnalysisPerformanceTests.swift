@@ -157,7 +157,7 @@ final class AnalysisPerformanceTests: XCTestCase {
         for (commitKey, periods) in bucketMap {
             guard let commitDate = commitDateByKey[commitKey] else { continue }
             for (period, count) in periods {
-                results.append(LineAgeBucket(commitDate: commitDate, period: period, lineCount: count, fileExtension: ".test", commitAuthor: "Test"))
+                results.append(LineAgeBucket(commitDate: commitDate, period: period, lineCount: count, fileExtension: ".test", filePath: "test.test", commitAuthor: "Test"))
             }
         }
         
