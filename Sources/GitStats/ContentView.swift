@@ -399,21 +399,28 @@ struct ContentView: View {
     }
 
     private var analyzeButton: some View {
-        Button(action: viewModel.toggleAnalysis) {
+        let needsRun = viewModel.needsReanalysis
+        
+        return Button(action: viewModel.toggleAnalysis) {
             HStack {
                 if viewModel.isAnalyzing {
                     Image(systemName: "stop.fill")
                 } else {
-                    Image(systemName: "waveform.path.ecg")
+                    Image(systemName: needsRun ? "waveform.path.ecg" : "checkmark.circle")
                 }
-                Text(viewModel.isAnalyzing ? "Cancel Analysis" : "Analyze Repository")
+                Text(
+                    viewModel.isAnalyzing ? "Cancel Analysis"
+                    : viewModel.hasResult && needsRun ? "Re-Analyze"
+                    : viewModel.hasResult ? "Up to Date"
+                    : "Analyze Repository"
+                )
             }
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
-        .tint(viewModel.isAnalyzing ? .red : .accentColor)
+        .tint(viewModel.isAnalyzing ? .red : needsRun ? .accentColor : .gray)
         .controlSize(.large)
-        .disabled(viewModel.repoPath == nil)
+        .disabled(viewModel.repoPath == nil || (!needsRun && !viewModel.isAnalyzing))
     }
 
     private func progressView(_ progress: AnalysisProgress) -> some View {

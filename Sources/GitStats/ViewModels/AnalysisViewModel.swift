@@ -70,8 +70,24 @@ final class AnalysisViewModel {
     var errorMessage: String?
     private var analysisTask: Task<Void, Never>?
     private var allBuckets: [LineAgeBucket] = []  // stored for re-rendering
+    
+    // Track what was analyzed so we know if re-analysis is needed
+    private var lastAnalyzedFilePaths: Set<String> = []
+    private var lastAnalyzedSampleCount: Int = 0
+    private var lastAnalyzedGranularity: AnalysisConfig.TimeGranularity = .quarter
 
     var hasResult: Bool { svgString != nil }
+    
+    /// True when the current settings differ from the last completed analysis.
+    var needsReanalysis: Bool {
+        guard hasResult else { return true }
+        let currentPaths = selectedFilePaths
+        if currentPaths.isEmpty { return false }  // nothing to analyze
+        // Re-analysis needed if files, sample count, or granularity changed
+        return currentPaths != lastAnalyzedFilePaths
+            || Int(sampleCount) != lastAnalyzedSampleCount
+            || granularity != lastAnalyzedGranularity
+    }
 
     var selectedFilePaths: Set<String> {
         fileTreeRoot?.selectedFilePaths ?? []
@@ -232,6 +248,9 @@ final class AnalysisViewModel {
 
                 await MainActor.run {
                     self.allBuckets = buckets
+                    self.lastAnalyzedFilePaths = selected
+                    self.lastAnalyzedSampleCount = Int(self.sampleCount)
+                    self.lastAnalyzedGranularity = self.granularity
                     self.rerenderChart()
                     self.isAnalyzing = false
                     self.analysisTask = nil
