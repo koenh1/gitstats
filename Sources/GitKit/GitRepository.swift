@@ -154,12 +154,11 @@ public actor GitRepository {
             let meta = String(line[line.startIndex..<tabIndex])
             let filePath = String(line[line.index(after: tabIndex)...])
             let ext = (filePath as NSString).pathExtension
-            guard !ext.isEmpty else { continue }
             
             let metaParts = meta.split(separator: " ").filter { !$0.isEmpty }
             guard metaParts.count >= 4, let size = Int(metaParts[3]) else { continue }
             
-            let dotExt = ".\(ext)"
+            let dotExt = ext.isEmpty ? "(none)" : ".\(ext)"
             filesByExt[dotExt, default: []].append(FileInfo(path: filePath, size: size))
         }
         

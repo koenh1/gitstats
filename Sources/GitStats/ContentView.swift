@@ -229,11 +229,11 @@ struct ContentView: View {
                     .foregroundStyle(Color.accentColor)
             }
             
-            // Show only text extensions as toggleable chips
-            let textExts = viewModel.discoveredExtensions.filter(\.isTextType)
-            if !textExts.isEmpty {
+            // Show all extensions as toggleable chips
+            let allExts = viewModel.discoveredExtensions
+            if !allExts.isEmpty {
                 FlowLayout(spacing: 4) {
-                    ForEach(textExts) { item in
+                    ForEach(allExts) { item in
                         Button {
                             item.isSelected.toggle()
                             viewModel.applyExtensionPreselection()

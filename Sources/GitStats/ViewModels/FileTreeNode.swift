@@ -119,7 +119,8 @@ final class FileTreeNode: Identifiable {
             }
             recalculateFromChildren()
         } else {
-            let ext = "." + ((fullPath as NSString).pathExtension)
+            let pathExt = (fullPath as NSString).pathExtension
+            let ext = pathExt.isEmpty ? "(none)" : ".\(pathExt)"
             selectionState = extensions.contains(ext) ? .all : .none
         }
     }
@@ -149,9 +150,10 @@ final class FileTreeNode: Identifiable {
                     )
                     node.parent = current
                     if isLast {
-                        // File: preselect if it's a known text type
+                        // File: preselect if it's a known text type AND not inside a dot-directory
                         let ext = "." + ((path as NSString).pathExtension)
-                        node.selectionState = textExtensions.contains(ext.lowercased()) ? .all : .none
+                        let inDotDir = components.dropLast().contains(where: { $0.hasPrefix(".") })
+                        node.selectionState = (!inDotDir && textExtensions.contains(ext.lowercased())) ? .all : .none
                     }
                     current.children.append(node)
                     current = node
