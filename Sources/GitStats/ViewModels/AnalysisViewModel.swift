@@ -338,13 +338,12 @@ final class AnalysisViewModel {
         }
         
         // Aggregate: combine line counts for same (commitDate, groupKey)
+        // Use full timestamp as key (not just date) to keep same-day commits separate
         var aggregated: [String: [String: Int]] = [:] // dateKey -> groupKey -> count
         var dateByKey: [String: Date] = [:]
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd"
         
         for bucket in filtered {
-            let dateKey = dateFormatter.string(from: bucket.commitDate)
+            let dateKey = String(bucket.commitDate.timeIntervalSince1970)
             let groupKey = chartMode == .byAuthor ? bucket.commitAuthor : bucket.period
             dateByKey[dateKey] = bucket.commitDate
             aggregated[dateKey, default: [:]][groupKey, default: 0] += bucket.lineCount

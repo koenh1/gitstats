@@ -21,7 +21,7 @@ import XCTest
 final class AnalysisCorrectnessTests: XCTestCase {
 
     var testRepoURL: URL {
-        URL(fileURLWithPath: "/tmp/gitstats-test-repo")
+        URL(fileURLWithPath: "/Users/koenhendrikx/gitstats-test-repo")
     }
 
     // MARK: - Basic Repository Tests
@@ -92,7 +92,9 @@ final class AnalysisCorrectnessTests: XCTestCase {
         XCTAssertEqual(txtLinesAtHead, 500, "HEAD should have 500 .txt lines")
         XCTAssertEqual(mdLinesAtHead, 500, "HEAD should have 500 .md lines")
 
-        print("  ✅ HEAD total: \(totalLinesAtHead) lines (\(txtLinesAtHead) .txt + \(mdLinesAtHead) .md)")
+        print(
+            "  ✅ HEAD total: \(totalLinesAtHead) lines (\(txtLinesAtHead) .txt + \(mdLinesAtHead) .md)"
+        )
     }
 
     func testAnalysisProgressiveGrowth() async throws {

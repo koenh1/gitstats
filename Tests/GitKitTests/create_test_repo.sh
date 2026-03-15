@@ -24,7 +24,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_DIR="gitstats-test-repo"
+REPO_DIR="/Users/koenhendrikx/gitstats-test-repo"
 
 echo "=== Removing old test repo ==="
 rm -rf "$REPO_DIR"
