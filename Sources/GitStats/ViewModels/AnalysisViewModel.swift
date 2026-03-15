@@ -67,6 +67,10 @@ final class AnalysisViewModel {
     var firstCommitDate: Date?
     var lastCommitDate: Date?
     var totalFileCount: Int = 0
+    
+    // Version markers
+    var versionMarkers: [(date: Date, label: String)] = []
+    var showVersionMarkers: Bool = true
 
     // State
     var isAnalyzing: Bool = false
@@ -216,6 +220,15 @@ final class AnalysisViewModel {
                     }
 
                     self.isLoadingExtensions = false
+                    
+                    // Fetch version markers (non-blocking)
+                    Task {
+                        if let markers = try? await repo.versionMarkers() {
+                            await MainActor.run {
+                                self.versionMarkers = markers.map { ($0.date, $0.version) }
+                            }
+                        }
+                    }
                 }
             } catch {
                 await MainActor.run {
@@ -336,7 +349,10 @@ final class AnalysisViewModel {
             }
         }
         
-        let chartData = StackedAreaChart.build(from: chartBuckets)
+        let chartData = StackedAreaChart.build(
+            from: chartBuckets,
+            versionMarkers: showVersionMarkers ? versionMarkers : []
+        )
         
         var rendererConfig = SVGRenderer.Config()
         rendererConfig.title = "Code Archaeology: \(repoName)"

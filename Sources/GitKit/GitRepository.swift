@@ -253,4 +253,109 @@ public actor GitRepository {
         
         return String(decoding: data, as: UTF8.self)
     }
+    
+    // MARK: - Version Markers
+    
+    /// A version marker with a date and label, for overlaying on charts.
+    public struct VersionMarker: Sendable {
+        public let date: Date
+        public let version: String  // e.g. "1.2" or "v2.0"
+    }
+    
+    /// Extracts version markers from git tags and/or pom.xml.
+    /// For tags: parses semver-like patterns and deduplicates by major.minor.
+    /// For pom.xml: reads the <version> at each tag commit, using major.minor only.
+    public func versionMarkers() throws -> [VersionMarker] {
+        var markers: [VersionMarker] = []
+        var seenVersions = Set<String>()
+        
+        // Try git tags first
+        // Format: <unix_timestamp> <tagname>
+        if let tagOutput = try? runGit([
+            "tag", "--sort=creatordate",
+            "--format=%(creatordate:unix) %(refname:short)"
+        ]), !tagOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let versionPattern = try NSRegularExpression(
+                pattern: #"[vV]?(\d+)\.(\d+)(?:\.\d+)?"#
+            )
+            
+            for line in tagOutput.split(separator: "\n") {
+                let str = String(line)
+                guard let spaceIdx = str.firstIndex(of: " ") else { continue }
+                let tsStr = String(str[str.startIndex..<spaceIdx])
+                let tagName = String(str[str.index(after: spaceIdx)...])
+                guard let ts = TimeInterval(tsStr) else { continue }
+                
+                let range = NSRange(tagName.startIndex..., in: tagName)
+                guard let match = versionPattern.firstMatch(in: tagName, range: range) else { continue }
+                
+                let majorRange = Range(match.range(at: 1), in: tagName)!
+                let minorRange = Range(match.range(at: 2), in: tagName)!
+                let majorMinor = "\(tagName[majorRange]).\(tagName[minorRange])"
+                
+                guard !seenVersions.contains(majorMinor) else { continue }
+                seenVersions.insert(majorMinor)
+                
+                markers.append(VersionMarker(
+                    date: Date(timeIntervalSince1970: ts),
+                    version: majorMinor
+                ))
+            }
+        }
+        
+        // If no tag-based markers found, try pom.xml
+        if markers.isEmpty {
+            markers = try pomVersionMarkers()
+        }
+        
+        return markers.sorted { $0.date < $1.date }
+    }
+    
+    /// Extract versions from pom.xml across the repo history.
+    private func pomVersionMarkers() throws -> [VersionMarker] {
+        // Check if pom.xml exists at HEAD
+        let hasFile = (try? runGit(["ls-tree", "--name-only", "HEAD", "pom.xml"])) ?? ""
+        guard hasFile.trimmingCharacters(in: .whitespacesAndNewlines) == "pom.xml" else {
+            return []
+        }
+        
+        // Get commits that modified pom.xml (oldest first) with timestamps
+        let logOutput = try runGit([
+            "log", "--format=%H %at", "--reverse", "--diff-filter=AM", "--", "pom.xml"
+        ])
+        
+        let versionPattern = try NSRegularExpression(
+            pattern: #"<version>(\d+)\.(\d+)(?:\.\d+)*(?:-[A-Za-z0-9.]+)?</version>"#
+        )
+        
+        var markers: [VersionMarker] = []
+        var seenVersions = Set<String>()
+        
+        for line in logOutput.split(separator: "\n") {
+            let parts = line.split(separator: " ")
+            guard parts.count >= 2,
+                  let ts = TimeInterval(parts[1]) else { continue }
+            let hash = String(parts[0])
+            
+            // Read pom.xml at this commit
+            guard let content = try? runGit(["show", "\(hash):pom.xml"]) else { continue }
+            
+            let range = NSRange(content.startIndex..., in: content)
+            guard let match = versionPattern.firstMatch(in: content, range: range) else { continue }
+            
+            let majorRange = Range(match.range(at: 1), in: content)!
+            let minorRange = Range(match.range(at: 2), in: content)!
+            let majorMinor = "\(content[majorRange]).\(content[minorRange])"
+            
+            guard !seenVersions.contains(majorMinor) else { continue }
+            seenVersions.insert(majorMinor)
+            
+            markers.append(VersionMarker(
+                date: Date(timeIntervalSince1970: ts),
+                version: majorMinor
+            ))
+        }
+        
+        return markers
+    }
 }

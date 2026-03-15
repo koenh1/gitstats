@@ -193,6 +193,17 @@ struct ContentView: View {
                     }
                 }
             }
+            
+            // Version markers toggle (only when markers exist)
+            if !viewModel.versionMarkers.isEmpty {
+                Toggle("Version markers", isOn: $viewModel.showVersionMarkers)
+                    .font(.caption)
+                    .onChange(of: viewModel.showVersionMarkers) {
+                        if viewModel.hasResult {
+                            viewModel.rerenderChart()
+                        }
+                    }
+            }
         }
     }
     

@@ -72,6 +72,16 @@ public struct SVGRenderer {
             svg += renderArea(series, plotWidth: plotWidth, plotHeight: plotHeight, maxY: data.maxLineCount)
         }
         
+        // Version markers (vertical dashed lines with labels)
+        for marker in data.versionMarkers {
+            let x = fmt(marker.x * plotWidth)
+            svg += "<line x1=\"\(x)\" y1=\"0\" x2=\"\(x)\" y2=\"\(fmt(plotHeight))\" "
+            svg += "stroke=\"rgba(255,255,255,0.5)\" stroke-width=\"1\" stroke-dasharray=\"6,4\"/>\n"
+            svg += "<text x=\"\(x)\" y=\"-6\" "
+            svg += "text-anchor=\"middle\" fill=\"rgba(255,255,255,0.8)\" font-size=\"10\" font-weight=\"600\">"
+            svg += "\(escapeXML(marker.label))</text>\n"
+        }
+        
         // Axes
         svg += renderXAxis(dates: data.commitDates, plotWidth: plotWidth, plotHeight: plotHeight)
         svg += renderYAxis(maxY: data.maxLineCount, plotWidth: plotWidth, plotHeight: plotHeight)

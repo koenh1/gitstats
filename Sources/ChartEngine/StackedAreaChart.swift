@@ -9,11 +9,18 @@ public struct ChartData {
         /// Points along the x-axis. Each point has (x: normalized 0-1, yBottom, yTop) in line-count space.
         public let points: [(x: Double, yBottom: Double, yTop: Double)]
     }
+    
+    /// A version marker with an x-position (0-1) and label.
+    public struct VersionMarker {
+        public let x: Double    // normalized 0-1 position on x-axis
+        public let label: String
+    }
 
     public let series: [Series]
     public let commitDates: [Date]
     public let maxLineCount: Double
     public let allPeriods: [String]  // sorted chronologically
+    public let versionMarkers: [VersionMarker]
 
     public var isEmpty: Bool { series.isEmpty }
 }
@@ -33,10 +40,13 @@ public struct StackedAreaChart {
         }
     }
 
-    /// Builds stacked chart data from an array of buckets.
-    public static func build(from buckets: [Bucket]) -> ChartData {
+    /// Builds stacked chart data from an array of buckets, with optional version markers.
+    public static func build(
+        from buckets: [Bucket],
+        versionMarkers: [(date: Date, label: String)] = []
+    ) -> ChartData {
         guard !buckets.isEmpty else {
-            return ChartData(series: [], commitDates: [], maxLineCount: 0, allPeriods: [])
+            return ChartData(series: [], commitDates: [], maxLineCount: 0, allPeriods: [], versionMarkers: [])
         }
 
         // Collect unique commit dates (sorted) and periods (sorted)
@@ -66,7 +76,7 @@ public struct StackedAreaChart {
 
         guard maxTotal > 0 else {
             return ChartData(
-                series: [], commitDates: commitDates, maxLineCount: 0, allPeriods: periods)
+                series: [], commitDates: commitDates, maxLineCount: 0, allPeriods: periods, versionMarkers: [])
         }
 
         // Build stacked series
@@ -101,11 +111,25 @@ public struct StackedAreaChart {
                 ))
         }
 
+        // Compute version marker positions
+        let chartMarkers: [ChartData.VersionMarker]
+        if !versionMarkers.isEmpty, let firstDate = commitDates.first, let lastDate = commitDates.last {
+            let span = lastDate.timeIntervalSince(firstDate)
+            chartMarkers = span > 0 ? versionMarkers.compactMap { vm in
+                let x = vm.date.timeIntervalSince(firstDate) / span
+                guard x >= 0 && x <= 1 else { return nil }
+                return ChartData.VersionMarker(x: x, label: vm.label)
+            } : []
+        } else {
+            chartMarkers = []
+        }
+
         return ChartData(
             series: seriesList,
             commitDates: commitDates,
             maxLineCount: maxTotal,
-            allPeriods: periods
+            allPeriods: periods,
+            versionMarkers: chartMarkers
         )
     }
 }
